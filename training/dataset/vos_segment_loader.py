@@ -130,17 +130,31 @@ class PalettisedPNGSegmentLoader:
         )
 
         # load the mask
-        masks = PILImage.open(mask_path).convert("P")
+        masks = PILImage.open(mask_path).convert("RGB")
         masks = np.array(masks)
 
-        object_id = pd.unique(masks.flatten())
-        object_id = object_id[object_id != 0]  # remove background (0)
+        object_id = pd.DataFrame(masks.reshape(-1, 3), columns=['R', 'G', 'B']).drop_duplicates().values
+        # object_id = pd.unique(masks.flatten())
+        # object_id = object_id[object_id != 0]  # remove background (0)
 
         # convert into N binary segmentation masks
         binary_segments = {}
         for i in object_id:
-            bs = masks == i
-            binary_segments[i] = torch.from_numpy(bs)
+            # bs = masks == i
+            # binary_segments[i] = torch.from_numpy(bs)
+
+            # check if i != [0,0,0]
+            if np.all(i == 0):
+                continue
+            mask = (masks[..., 0] == i[0]) & (masks[..., 1] == i[1]) & (masks[..., 2] == i[2])
+            # convert i to a hashable tuple
+            r, g, b = tuple(i.tolist())
+            obj_id = (r << 16) | (g << 8) | b
+            # # Inverse of the encoding
+            # r_i = (obj_id >> 16) & 0xFF
+            # g_i = (obj_id >> 8) & 0xFF
+            # b_i = obj_id & 0xFF
+            binary_segments[obj_id] = torch.from_numpy(mask)
 
         return binary_segments
 
@@ -298,3 +312,4 @@ class SA1BSegmentLoader:
 
     def load(self, frame_idx):
         return self.segments
+    

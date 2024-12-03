@@ -61,7 +61,7 @@ class PNGRawDataset(VOSRawDataset):
         file_list_txt=None,
         excluded_videos_list_txt=None,
         sample_rate=1,
-        is_palette=True,
+        is_palette=False,
         single_object_mode=False,
         truncate_video=-1,
         frames_sampling_mult=False,
@@ -131,7 +131,7 @@ class PNGRawDataset(VOSRawDataset):
                 video_mask_root, self.single_object_mode
             )
 
-        all_frames = sorted(glob.glob(os.path.join(video_frame_root, "*.jpg")))
+        all_frames = sorted(glob.glob(os.path.join(video_frame_root, "*.png")))
         if self.truncate_video > 0:
             all_frames = all_frames[: self.truncate_video]
         frames = []
@@ -169,7 +169,7 @@ class SA1BRawDataset(VOSRawDataset):
         else:
             subset = os.listdir(self.img_folder)
             subset = [
-                path.split(".")[0] for path in subset if path.endswith(".jpg")
+                path.split(".")[0] for path in subset if path.endswith(".png")
             ]  # remove extension
 
         # Read and process excluded files if provided
@@ -190,7 +190,7 @@ class SA1BRawDataset(VOSRawDataset):
         """
         video_name = self.video_names[idx]
 
-        video_frame_path = os.path.join(self.img_folder, video_name + ".jpg")
+        video_frame_path = os.path.join(self.img_folder, video_name + ".png")
         video_mask_path = os.path.join(self.gt_folder, video_name + ".json")
 
         segment_loader = SA1BSegmentLoader(
@@ -286,7 +286,7 @@ class JSONRawDataset(VOSRawDataset):
             VOSFrame(
                 frame_id,
                 image_path=os.path.join(
-                    self.img_folder, f"{video_name}/%05d.jpg" % (frame_id)
+                    self.img_folder, f"{video_name}/%05d.png" % (frame_id)
                 ),
             )
             for frame_id in frame_ids[:: self.sample_rate]
