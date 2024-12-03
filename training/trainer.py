@@ -132,8 +132,8 @@ class LoggingConf:
     tensorboard_writer: Any
     log_level_primary: str = "INFO"
     log_level_secondary: str = "ERROR"
-    log_scalar_frequency: int = 100
-    log_visual_frequency: int = 100
+    log_scalar_frequency: int = 10
+    log_visual_frequency: int = 10
     scalar_keys_to_log: Optional[Dict[str, Any]] = None
     log_batch_stats: bool = False
 
