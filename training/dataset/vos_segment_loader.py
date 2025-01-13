@@ -313,3 +313,308 @@ class SA1BSegmentLoader:
     def load(self, frame_idx):
         return self.segments
     
+
+from shapely.geometry import shape, box
+from shapely.ops import unary_union
+import numpy as np
+import cv2
+from concurrent.futures import ThreadPoolExecutor
+
+class GeoJSONSegmentLoader:
+    def __init__(self, video_geojson_root):
+        """
+        SegmentLoader for datasets with masks stored as GeoJSON format.
+        video_geojson_root: the folder contains all the masks stored in GeoJSON
+        """
+        self.video_geojson_root = video_geojson_root
+        
+        # Load metadata for transformation matrix
+        meta_files = [f for f in os.listdir(self.video_geojson_root) 
+                     if f.endswith('_meta.json')]
+        if meta_files:
+            meta_path = os.path.join(self.video_geojson_root, meta_files[0])
+            with open(meta_path, 'r') as f:
+                self.transform_matrix = np.array(json.load(f)["dxf2img"])
+        else:
+            raise ValueError("No metadata file found in the video root directory")
+
+        # Load GeoJSON data
+        geojson_files = [f for f in os.listdir(self.video_geojson_root) 
+                        if f.endswith('.geojson')]
+        if not geojson_files:
+            raise ValueError("No GeoJSON files found in the video root directory")
+            
+        self.geojson_path = os.path.join(self.video_geojson_root, geojson_files[0])
+        with open(self.geojson_path, 'r') as f:
+            self.geojson_data = json.load(f)
+
+        # Store crop information from the dataset
+        self.crops = None
+        self.image_size = None
+        # ... existing initialization code ...
+        self._cache = {}
+        self._cache_size = 100
+    
+    def _precompute_geometries(self, crop_geometry):
+        """Pre-compute and cache all transformed geometries that intersect with the crop box"""
+                
+        excluded_type_codes = ['wall', 'external-wall', 'glass-wall', 'circulation', 'desk', "workstation-desk", 
+                            "break-area-desk", "game-table", "workstation-chair", "meeting-room-chair", "office-equipment-accessories",
+                            "couch", "pouchair", "break-area-couch", "waiting-seats", "meeting-table", "meeting-desk", "meeting-room-desk",
+                            "floor-outline", "building-outline", "hallway", "vestibule"]
+
+        # First transform features and filter by type_codes and crop_box intersection
+        filtered_features = []
+        for feature in self.geojson_data['features']:
+            # Get typeCode from properties
+            type_code = feature.get('properties', {}).get('typeCode')
+            
+            # Skip if type_code is in the excluded list
+            if excluded_type_codes is not None and type_code in excluded_type_codes:
+                continue
+
+            # Transform the geometry first
+            geom = shape(feature['geometry'])
+            transformed_geom = self._transform_geometry(geom)
+
+            # Check if transformed geometry intersects with original crop box
+            if crop_geometry.contains(transformed_geom):
+                filtered_features.append((feature, transformed_geom))
+
+        # Now do random selection from the filtered features
+        import random
+        k = 32
+        if k is not None and k < len(filtered_features):
+            filtered_features = random.sample(filtered_features, k)
+
+        # Create final dictionary of transformed geometries
+        transformed_geoms = {}
+        for obj_id, (feature, transformed_geom) in enumerate(filtered_features, start=1):
+            transformed_geoms[obj_id] = transformed_geom
+        
+        return transformed_geoms
+
+
+    def set_crop_info(self, crops, image_size):
+        """Store crop information for later use"""
+        self.crops = crops
+        self.image_size = image_size
+
+    def _transform_coordinates(self, coords):
+        """Transforms coordinates from DXF space to image space."""
+        coords_homogeneous = np.ones((len(coords), 3))
+        coords_homogeneous[:, :2] = coords
+        transformed_coords = np.dot(self.transform_matrix, coords_homogeneous.T).T
+        return transformed_coords[:, :2]
+
+    def _transform_geometry(self, geom):
+        """Transform a geometry from DXF space to image space"""
+        if geom.is_empty:
+            return geom
+        
+        if geom.geom_type == 'Polygon':
+            exterior_coords = np.array(geom.exterior.coords)
+            transformed_exterior = self._transform_coordinates(exterior_coords)
+            
+            interiors = []
+            for interior in geom.interiors:
+                interior_coords = np.array(interior.coords)
+                transformed_interior = self._transform_coordinates(interior_coords)
+                interiors.append(transformed_interior)
+                
+            return self._create_polygon(transformed_exterior, interiors)
+            
+        elif geom.geom_type == 'MultiPolygon':
+            transformed_polygons = [self._transform_geometry(poly) for poly in geom.geoms]
+            return unary_union(transformed_polygons)
+        
+        return geom
+
+    def load(self, frame_id):
+        """Optimized load function for large images"""
+        if frame_id in self._cache:
+            return self._cache[frame_id]
+
+        if self.crops is None or self.image_size is None:
+            raise ValueError("Crop information not set. Call set_crop_info first.")
+
+        crop_box = self.crops[frame_id]
+        binary_segments = {}
+        
+        ## Create crop box geometry for intersection testing
+        crop_geometry = box(crop_box[0], crop_box[1], crop_box[2], crop_box[3])
+        crop_geometry = box(
+        crop_box[0],  # left = minx
+        crop_box[3],  # bottom = miny
+        crop_box[2],  # right = maxx
+        crop_box[1]   # top = maxy
+        )
+        
+        # Calculate crop dimensions
+        crop_width = crop_box[2] - crop_box[0]
+        crop_height = crop_box[3] - crop_box[1]
+        
+        # Pre-compute and cache transformed geometries
+        self._transformed_geometries = self._precompute_geometries(crop_geometry)
+        
+        def process_object(obj_id):
+            """Process single object - suitable for parallel processing"""
+            geom = self._transformed_geometries[obj_id]
+            
+            # # Quick intersection test
+            # if not geom.intersects(crop_geometry):
+            #     return None
+                
+            # Create mask only for the crop region
+            mask = np.zeros((crop_height, crop_width), dtype=np.uint8)
+            
+            # Convert geometry to pixel coordinates relative to crop
+            geom = geom.buffer(0)
+            geom_cropped = geom.intersection(crop_geometry)
+            if geom_cropped.is_empty:
+                return None
+                
+            # Convert to pixel coordinates and draw
+            try:
+                points = []
+                if geom_cropped.geom_type == 'Polygon':
+                    points = [geom_cropped.exterior.coords]
+                elif geom_cropped.geom_type == 'MultiPolygon':
+                    points = [poly.exterior.coords for poly in geom_cropped.geoms]
+                
+                for poly_points in points:
+                    # Convert to relative coordinates
+                    poly_points = np.array(poly_points)
+                    poly_points[:, 0] -= crop_box[0]
+                    poly_points[:, 1] -= crop_box[1]
+                    
+                    # Convert to integers
+                    poly_points = poly_points.astype(np.int32)
+                    
+                    # Draw polygon using cv2
+                    cv2.fillPoly(mask, [poly_points], 1)
+                
+                # Convert holes if any
+                if geom_cropped.geom_type == 'Polygon':
+                    for interior in geom_cropped.interiors:
+                        points = np.array(interior.coords)
+                        points[:, 0] -= crop_box[0]
+                        points[:, 1] -= crop_box[1]
+                        cv2.fillPoly(mask, [points.astype(np.int32)], 0)
+                
+                # Only return if mask contains any positive pixels
+                if mask.any():
+                    return obj_id, torch.from_numpy(mask.astype(bool))
+                    
+            except Exception as e:
+                print(f"Error processing object {obj_id}: {e}")
+                return None
+                
+            return None
+
+        # Process objects in parallel
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            results = executor.map(process_object, self._transformed_geometries.keys())
+            
+        # Collect results
+        for result in results:
+            if result is not None:
+                obj_id, mask = result
+                binary_segments[obj_id] = mask
+
+        # Cache result
+        if len(self._cache) >= self._cache_size:
+            self._cache.pop(next(iter(self._cache)))
+        self._cache[frame_id] = binary_segments
+
+        return binary_segments
+
+    def _create_polygon(self, exterior, interiors):
+        """Helper function to create a polygon from coordinates"""
+        from shapely.geometry import Polygon
+        return Polygon(exterior, interiors)
+    
+    def __len__(self):
+        return len(self.crops) if self.crops is not None else 0
+    
+    # def visualize_transformed_geometries(self, crop_geometry):
+    # """
+    # Visualize all transformed geometries and crop box for debugging.
+    # Blue: Transformed geometries
+    # Red: Crop box
+    # Green: Selected geometries (after filtering and random selection)
+    # """
+    # import matplotlib.pyplot as plt
+    # from matplotlib.patches import Polygon as MplPolygon
+    # from shapely.geometry import MultiPolygon, Polygon, Point, LineString, MultiPoint, MultiLineString
+    
+    # # Create figure and axis
+    # fig, ax = plt.subplots(figsize=(15, 15))
+    
+    # def plot_polygon(geometry, **kwargs):
+    #     """Helper function to plot a geometry"""
+    #     if isinstance(geometry, (Point, MultiPoint)):
+    #         # Skip points for now
+    #         return
+    #     elif isinstance(geometry, (LineString, MultiLineString)):
+    #         # Skip lines for now
+    #         return
+    #     elif isinstance(geometry, MultiPolygon):
+    #         for p in geometry.geoms:
+    #             if isinstance(p, Polygon):
+    #                 plot_polygon(p, **kwargs)
+    #     elif isinstance(geometry, Polygon):
+    #         # Extract exterior coordinates
+    #         exterior_coords = np.array(geometry.exterior.coords)
+    #         patch = MplPolygon(exterior_coords, **kwargs)
+    #         ax.add_patch(patch)
+            
+    #         # Plot interior rings (holes)
+    #         for interior in geometry.interiors:
+    #             interior_coords = np.array(interior.coords)
+    #             patch = MplPolygon(interior_coords, **kwargs)
+    #             ax.add_patch(patch)
+    
+    # # Plot all transformed geometries in blue (light blue with alpha)
+    # for feature in self.geojson_data['features']:
+    #     geom = shape(feature['geometry'])
+    #     transformed_geom = self._transform_geometry(geom)
+    #     plot_polygon(transformed_geom, facecolor='blue', edgecolor='blue', alpha=0.2)
+    
+    # # Plot crop box in red
+    # plot_polygon(crop_geometry, facecolor='none', edgecolor='red', linewidth=2)
+    
+    # # Get and plot selected geometries
+    # selected_geoms = self._precompute_geometries(crop_geometry)
+    # for geom in selected_geoms.values():
+    #     plot_polygon(geom, facecolor='green', edgecolor='green', alpha=0.5)
+    
+    # # Set axis limits with some padding
+    # all_bounds = [geom.bounds for geom in selected_geoms.values()]
+    # all_bounds.append(crop_geometry.bounds)
+    
+    # min_x = min(bound[0] for bound in all_bounds)
+    # min_y = min(bound[1] for bound in all_bounds)
+    # max_x = max(bound[2] for bound in all_bounds)
+    # max_y = max(bound[3] for bound in all_bounds)
+    
+    # padding = (max(max_x - min_x, max_y - min_y)) * 0.1
+    # ax.set_xlim(min_x - padding, max_x + padding)
+    # ax.set_ylim(min_y - padding, max_y + padding)
+    
+    # # Add legend
+    # from matplotlib.patches import Patch
+    # legend_elements = [
+    #     Patch(facecolor='blue', alpha=0.2, label='All Transformed Geometries'),
+    #     Patch(facecolor='none', edgecolor='red', label='Crop Box'),
+    #     Patch(facecolor='green', alpha=0.5, label='Selected Geometries')
+    # ]
+    # ax.legend(handles=legend_elements)
+    
+    # # Add title and grid
+    # plt.title('Transformed Geometries and Crop Box Visualization')
+    # plt.grid(True)
+    # plt.axis('equal')
+    
+    # # Show plot
+    # plt.savefig('./crop_box.png')
