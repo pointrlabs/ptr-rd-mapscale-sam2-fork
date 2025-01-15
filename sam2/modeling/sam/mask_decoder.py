@@ -1,4 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
+ # Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 
 # This source code is licensed under the license found in the
@@ -8,9 +8,9 @@ from typing import List, Optional, Tuple, Type
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from sam2.modeling.sam2_utils import LayerNorm2d, MLP
-
 
 class MaskDecoder(nn.Module):
     def __init__(
@@ -50,7 +50,7 @@ class MaskDecoder(nn.Module):
         super().__init__()
         self.transformer_dim = transformer_dim
         self.transformer = transformer
-
+        
         self.num_multimask_outputs = num_multimask_outputs
 
         self.iou_token = nn.Embedding(1, transformer_dim)
@@ -89,6 +89,13 @@ class MaskDecoder(nn.Module):
             ]
         )
 
+        self.output_hypernetworks_patched_mlps = nn.ModuleList(
+            [
+                MLP(transformer_dim, transformer_dim, 1024, 3)
+                for i in range(self.num_mask_tokens)
+            ]
+        )
+        
         self.iou_prediction_head = MLP(
             transformer_dim,
             iou_head_hidden_dim,
@@ -107,6 +114,9 @@ class MaskDecoder(nn.Module):
         self.dynamic_multimask_stability_delta = dynamic_multimask_stability_delta
         self.dynamic_multimask_stability_thresh = dynamic_multimask_stability_thresh
 
+        # self.refiner = MaskRefiner(diffusion_network=DiffusionRefinementNetwork())
+
+        
     def forward(
         self,
         image_embeddings: torch.Tensor,
@@ -224,15 +234,73 @@ class MaskDecoder(nn.Module):
             upscaled_embedding = act1(ln1(dc1(src) + feat_s1))
             upscaled_embedding = act2(dc2(upscaled_embedding) + feat_s0)
 
+        C, H, W = 32, 256, 256
+        patch_size = 8
+
+        assert H % patch_size == 0 and W % patch_size == 0, "Height and Width must be divisible by patch_size"
+        num_patches_h = H // patch_size
+        num_patches_w = W // patch_size
+        # Reshape into patches
+        patches = upscaled_embedding.view(b, C, num_patches_h, patch_size, num_patches_w, patch_size)
+        # Permute to organize patches as a separate dimension
+        patches = patches.permute(0, 2, 4, 1, 3, 5).contiguous()
+        patches = patches.view(b, num_patches_h * num_patches_w, C, patch_size, patch_size)
+    
         hyper_in_list: List[torch.Tensor] = []
         for i in range(self.num_mask_tokens):
             hyper_in_list.append(
-                self.output_hypernetworks_mlps[i](mask_tokens_out[:, i, :])
+                self.output_hypernetworks_patched_mlps[i](mask_tokens_out[:, i, :])
             )
         hyper_in = torch.stack(hyper_in_list, dim=1)
-        b, c, h, w = upscaled_embedding.shape
-        masks = (hyper_in @ upscaled_embedding.view(b, c, h * w)).view(b, -1, h, w)
 
+        # weights: torch.Size([16, 1024, 4])
+
+        weights = hyper_in.transpose(1,2)
+        
+        _, N_p, C, patch_size, _ = patches.shape
+        num_weights = weights.shape[-1]
+        H = W = int(patch_size * (N_p ** 0.5))  # Calculate original image size
+    
+        # Expand patches and weights for broadcasting
+        patches = patches.unsqueeze(2)  # Shape: (B, N_p, 1, C, patch_size, patch_size)
+        weights = weights.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # Shape: (B, N_p, 4, 1, 1, 1)
+    
+        # Scale patches with weights
+        scaled_patches = patches * weights  # Shape: (B, N_p, 4, C, patch_size, patch_size)
+    
+        # Sum over channel dimension (C)
+        summed_patches = scaled_patches.sum(dim=3)  # Shape: (B, N_p, 4, patch_size, patch_size)
+    
+        # Reshape to process all weight sets at once
+        summed_patches = summed_patches.permute(0, 2, 1, 3, 4).contiguous()  # Shape: (B, 4, N_p, patch_size, patch_size)
+        summed_patches = summed_patches.view(b * num_weights, N_p, patch_size, patch_size)
+
+        def reconstruct_from_patches(patches, original_shape, patch_size):
+            B, C, H, W = original_shape
+            num_patches_h = H // patch_size
+            num_patches_w = W // patch_size
+            # Reshape patches into grid format
+            patches = patches.view(B, num_patches_h, num_patches_w, C, patch_size, patch_size)
+            # Permute to match original shape
+            patches = patches.permute(0, 3, 1, 4, 2, 5).contiguous()
+            # Reshape back to original shape
+            tensor = patches.view(B, C, H, W)
+            return tensor
+            
+        # Reconstruct images for all weight sets
+        masks = reconstruct_from_patches(summed_patches, (b * num_weights, 1, H, W), patch_size)
+
+        masks = masks.view(b, num_weights, H, W)  # Shape: (B, 4, H, W)
+        
+        # import matplotlib.pyplot as plt
+        # for i in range(4):
+        #     plt.figure(figsize=(30, 30))
+        #     plt.imshow(masks[0,i].clone().float().detach().cpu())
+        
+        #     # Save the figure
+        #     plt.savefig(f'mask_{i}.png')
+        #     plt.close()
+            
         # Generate mask quality predictions
         iou_pred = self.iou_prediction_head(iou_token_out)
         if self.pred_obj_scores:

@@ -32,6 +32,7 @@ from sam2.utils.amg import (
     uncrop_points,
 )
 
+from tqdm import tqdm
 
 class SAM2AutomaticMaskGenerator:
     def __init__(
@@ -264,10 +265,11 @@ class SAM2AutomaticMaskGenerator:
         # Get points for this crop
         points_scale = np.array(cropped_im_size)[None, ::-1]
         points_for_image = self.point_grids[crop_layer_idx] * points_scale
+        num_batches = len(points_for_image) // self.points_per_batch  # Estimate total batches
 
         # Generate masks for this crop in batches
         data = MaskData()
-        for (points,) in batch_iterator(self.points_per_batch, points_for_image):
+        for (points,) in tqdm(batch_iterator(self.points_per_batch, points_for_image), total=num_batches, desc="Processing Batches"):
             batch_data = self._process_batch(
                 points, cropped_im_size, crop_box, orig_size, normalize=True
             )
