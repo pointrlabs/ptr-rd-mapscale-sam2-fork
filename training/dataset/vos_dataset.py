@@ -100,7 +100,7 @@ class VOSDataset(VisionDataset):
                     frame.frame_idx, obj_ids=sampled_object_ids
                 )
             else:
-                segments = segment_loader.load(frame.frame_idx)
+                segments, clss = segment_loader.load(frame.frame_idx)
             for obj_id in sampled_object_ids:
                 # Extract the segment
                 if obj_id in segments:
@@ -109,17 +109,20 @@ class VOSDataset(VisionDataset):
                     ), "None targets are not supported"
                     # segment is uint8 and remains uint8 throughout the transforms
                     segment = segments[obj_id].to(torch.uint8)
+                    cls = clss[obj_id]
                 else:
                     # There is no target, we either use a zero mask target or drop this object
                     if not self.always_target:
                         continue
                     segment = torch.zeros(h, w, dtype=torch.uint8)
+                    cls = 0
 
                 images[frame_idx].objects.append(
                     Object(
                         object_id=obj_id,
                         frame_index=frame.frame_idx,
                         segment=segment,
+                        cls=cls,
                     )
                 )
         return VideoDatapoint(
@@ -135,7 +138,7 @@ class VOSDataset(VisionDataset):
         return len(self.video_dataset)
 
 
-def load_images(frames):
+def load_images(frames): 
     all_images = []
     cache = {}
     for frame in frames:

@@ -27,6 +27,14 @@ from training.dataset.vos_segment_loader import (
     GeoJSONSegmentLoader,
 )
 
+import os
+import glob
+import json
+import numpy as np
+from shapely.geometry import shape
+from shapely.affinity import scale
+from PIL import Image, ImageDraw
+Image.MAX_IMAGE_PIXELS = None  # Removes the limit completely
 
 @dataclass
 class VOSFrame:
@@ -307,14 +315,6 @@ class JSONRawDataset(VOSRawDataset):
 
     def __len__(self):
         return len(self.video_names)
-
-import os
-import glob
-import json
-import numpy as np
-from shapely.geometry import shape
-from shapely.affinity import scale
-from PIL import Image, ImageDraw
 
 class GeoJSONDataset(VOSRawDataset):
     def __init__(

@@ -157,6 +157,9 @@ class MultiStepMultiMasksAndIous(nn.Module):
         assert "loss_iou" in self.weight_dict
         if "loss_class" not in self.weight_dict:
             self.weight_dict["loss_class"] = 0.0
+        if "loss_cls" not in self.weight_dict:  # New semantic classification loss
+            self.weight_dict["loss_cls"] = 1.0
+
 
         self.focal_alpha_obj_score = focal_alpha_obj_score
         self.focal_gamma_obj_score = focal_gamma_obj_score
@@ -164,8 +167,13 @@ class MultiStepMultiMasksAndIous(nn.Module):
         self.iou_use_l1_loss = iou_use_l1_loss
         self.pred_obj_scores = pred_obj_scores
 
-    def forward(self, outs_batch: List[Dict], targets_batch: torch.Tensor):
+        # Classification loss
+        self.cls_criterion = nn.CrossEntropyLoss(reduction='mean')
+
+    def forward(self, outs_batch: List[Dict], targets_batch: torch.Tensor, classes_batch: torch.Tensor):
         assert len(outs_batch) == len(targets_batch)
+        assert len(outs_batch) == len(classes_batch)
+
         num_objects = torch.tensor(
             (targets_batch.shape[1]), device=targets_batch.device, dtype=torch.float
         )  # Number of objects is fixed within a batch
@@ -174,14 +182,14 @@ class MultiStepMultiMasksAndIous(nn.Module):
         num_objects = torch.clamp(num_objects / get_world_size(), min=1).item()
 
         losses = defaultdict(int)
-        for outs, targets in zip(outs_batch, targets_batch):
-            cur_losses = self._forward(outs, targets, num_objects)
+        for outs, targets, classes in zip(outs_batch, targets_batch, classes_batch):
+            cur_losses = self._forward(outs, targets, classes, num_objects)
             for k, v in cur_losses.items():
                 losses[k] += v
 
         return losses
 
-    def _forward(self, outputs: Dict, targets: torch.Tensor, num_objects):
+    def _forward(self, outputs: Dict, targets: torch.Tensor, target_classes: torch.Tensor, num_objects):
         """
         Compute the losses related to the masks: the focal loss and the dice loss.
         and also the MAE or MSE loss between predicted IoUs and actual IoUs.
@@ -201,22 +209,39 @@ class MultiStepMultiMasksAndIous(nn.Module):
         ious_list = outputs["multistep_pred_ious"]
         object_score_logits_list = outputs["multistep_object_score_logits"]
 
+        # Get batch size and device from existing tensors
+        batch_size = src_masks_list[0].size(0)
+        device = src_masks_list[0].device
+        num_classes = 214
+        
+        has_class_predictions = "multistep_pred_classes" in outputs
+        if has_class_predictions:
+            class_predictions = outputs["multistep_pred_classes"]
+        else:
+            # Create dummy predictions with correct shape: [batch_size, num_classes]
+            # Initialize with very negative values so softmax will give near-zero probabilities
+            dummy_predictions = torch.full((batch_size, num_classes), float('-10'), device=device)
+            class_predictions = [dummy_predictions] * len(src_masks_list)
+            print("Warning: No class predictions found in outputs, using dummy tensors")
+
+
         assert len(src_masks_list) == len(ious_list)
         assert len(object_score_logits_list) == len(ious_list)
 
         # accumulate the loss over prediction steps
-        losses = {"loss_mask": 0, "loss_dice": 0, "loss_iou": 0, "loss_class": 0}
+        losses = {"loss_mask": 0, "loss_dice": 0, "loss_iou": 0, "loss_class": 0, "loss_cls": 0}
         for src_masks, ious, object_score_logits in zip(
             src_masks_list, ious_list, object_score_logits_list
         ):
             self._update_losses(
-                losses, src_masks, target_masks, ious, num_objects, object_score_logits
+                losses, src_masks, target_masks, ious, num_objects, object_score_logits, class_predictions, target_classes
             )
         losses[CORE_LOSS_KEY] = self.reduce_loss(losses)
         return losses
 
     def _update_losses(
-        self, losses, src_masks, target_masks, ious, num_objects, object_score_logits
+        self, losses, src_masks, target_masks, ious, num_objects, object_score_logits,
+        pred_classes=None, target_classes=None  # Add class predictions and targets
     ):
         target_masks = target_masks.expand_as(src_masks)
         # get focal, dice and iou loss on all output masks in a prediction step
@@ -252,6 +277,12 @@ class MultiStepMultiMasksAndIous(nn.Module):
                 alpha=self.focal_alpha_obj_score,
                 gamma=self.focal_gamma_obj_score,
             )
+
+        # Classification loss (new)
+        if pred_classes is not None and target_classes is not None:
+            loss_cls = self.cls_criterion(pred_classes, target_classes)
+        else:
+            loss_cls = torch.tensor(0.0, device=loss_multimask.device)
 
         loss_multiiou = iou_loss(
             src_masks,
@@ -295,6 +326,8 @@ class MultiStepMultiMasksAndIous(nn.Module):
         losses["loss_dice"] += loss_dice.sum()
         losses["loss_iou"] += loss_iou.sum()
         losses["loss_class"] += loss_class
+        losses["loss_cls"] += loss_cls  # Add classification loss
+
 
     def reduce_loss(self, losses):
         reduced_loss = 0.0

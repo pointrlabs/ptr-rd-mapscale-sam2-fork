@@ -354,7 +354,15 @@ class GeoJSONSegmentLoader:
         # ... existing initialization code ...
         self._cache = {}
         self._cache_size = 100
-    
+
+
+        # Load class mappings
+        import yaml
+        with open(os.path.join('mapping/class_mapping.yaml'), 'r') as f:
+            mapping_data = yaml.safe_load(f)
+            self.class_mapping = mapping_data['class_mapping']
+            self.class_names = mapping_data['class_names']
+
     def _precompute_geometries(self, crop_geometry):
         """Pre-compute and cache all transformed geometries that intersect with the crop box"""
                 
@@ -389,10 +397,13 @@ class GeoJSONSegmentLoader:
 
         # Create final dictionary of transformed geometries
         transformed_geoms = {}
+        feature_classes = {}
         for obj_id, (feature, transformed_geom) in enumerate(filtered_features, start=1):
             transformed_geoms[obj_id] = transformed_geom
+            type_code = feature.get('properties', {}).get('typeCode')  # Get type_code here
+            feature_classes[obj_id] = self.class_mapping.get(type_code, 0)
         
-        return transformed_geoms
+        return transformed_geoms, feature_classes
 
 
     def set_crop_info(self, crops, image_size):
@@ -440,7 +451,8 @@ class GeoJSONSegmentLoader:
 
         crop_box = self.crops[frame_id]
         binary_segments = {}
-        
+        segment_classes = {}
+
         ## Create crop box geometry for intersection testing
         crop_geometry = box(crop_box[0], crop_box[1], crop_box[2], crop_box[3])
         crop_geometry = box(
@@ -455,12 +467,13 @@ class GeoJSONSegmentLoader:
         crop_height = crop_box[3] - crop_box[1]
         
         # Pre-compute and cache transformed geometries
-        self._transformed_geometries = self._precompute_geometries(crop_geometry)
+        self._transformed_geometries, self._feature_classes = self._precompute_geometries(crop_geometry)
         
         def process_object(obj_id):
             """Process single object - suitable for parallel processing"""
             geom = self._transformed_geometries[obj_id]
-            
+            cls = self._feature_classes[obj_id]
+
             # # Quick intersection test
             # if not geom.intersects(crop_geometry):
             #     return None
@@ -504,7 +517,7 @@ class GeoJSONSegmentLoader:
                 
                 # Only return if mask contains any positive pixels
                 if mask.any():
-                    return obj_id, torch.from_numpy(mask.astype(bool))
+                    return obj_id, torch.from_numpy(mask.astype(bool)), cls
                     
             except Exception as e:
                 print(f"Error processing object {obj_id}: {e}")
@@ -519,15 +532,16 @@ class GeoJSONSegmentLoader:
         # Collect results
         for result in results:
             if result is not None:
-                obj_id, mask = result
+                obj_id, mask, cls = result
                 binary_segments[obj_id] = mask
+                segment_classes[obj_id] = cls
 
         # Cache result
         if len(self._cache) >= self._cache_size:
             self._cache.pop(next(iter(self._cache)))
-        self._cache[frame_id] = binary_segments
+        self._cache[frame_id] = (binary_segments, segment_classes)
 
-        return binary_segments
+        return binary_segments, segment_classes
 
     def _create_polygon(self, exterior, interiors):
         """Helper function to create a polygon from coordinates"""
@@ -618,3 +632,20 @@ class GeoJSONSegmentLoader:
     
     # # Show plot
     # plt.savefig('./crop_box.png')
+
+if __name__ == '__main__':
+
+    # Initialize loader
+    loader = GeoJSONSegmentLoader(
+        video_geojson_root='/ssd/datasets/sam2_unit_geojson_dataset_jan3/geojsons/3070_5372'
+    )
+
+    # Load segments and classes
+    segments, classes = loader.load(0)
+
+    # Access segments and their classes
+    for obj_id in segments:
+        mask = segments[obj_id]
+        class_id = classes[obj_id]
+        class_name = loader.get_class_name(class_id)
+        print(f"Object {obj_id}: Class = {class_name} (ID: {class_id})")

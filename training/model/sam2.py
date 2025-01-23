@@ -391,6 +391,7 @@ class SAM2Train(SAM2Base):
             high_res_masks,
             obj_ptr,
             object_score_logits,
+            cls_preds,
         ) = sam_outputs
 
         current_out["multistep_pred_masks"] = low_res_masks
@@ -400,6 +401,7 @@ class SAM2Train(SAM2Base):
         current_out["multistep_pred_ious"] = [ious]
         current_out["multistep_point_inputs"] = [point_inputs]
         current_out["multistep_object_score_logits"] = [object_score_logits]
+        current_out["multistep_pred_classes"] = cls_preds
 
         # Optionally, sample correction points iteratively to correct the mask
         if frame_idx in frames_to_add_correction_pt:
@@ -415,6 +417,7 @@ class SAM2Train(SAM2Base):
                 low_res_masks,
                 high_res_masks,
                 object_score_logits,
+                cls_preds,
                 current_out,
             )
             (
@@ -425,12 +428,14 @@ class SAM2Train(SAM2Base):
                 high_res_masks,
                 obj_ptr,
                 object_score_logits,
+                cls_pred
             ) = final_sam_outputs
 
         # Use the final prediction (after all correction steps for output and eval)
         current_out["pred_masks"] = low_res_masks
         current_out["pred_masks_high_res"] = high_res_masks
         current_out["obj_ptr"] = obj_ptr
+        current_out["pred_cls"] = cls_pred
 
         # Finally run the memory encoder on the predicted mask to encode
         # it into a new memory feature (that can be used in future frames)
@@ -458,6 +463,7 @@ class SAM2Train(SAM2Base):
         low_res_masks,
         high_res_masks,
         object_score_logits,
+        cls_preds,
         current_out,
     ):
 
@@ -469,6 +475,7 @@ class SAM2Train(SAM2Base):
         all_pred_ious = [ious]
         all_point_inputs = [point_inputs]
         all_object_score_logits = [object_score_logits]
+        all_cls_preds = [cls_preds]
         for _ in range(self.num_correction_pt_per_frame):
             # sample a new point from the error between prediction and ground-truth
             # (with a small probability, directly sample from GT masks instead of errors)
@@ -517,6 +524,7 @@ class SAM2Train(SAM2Base):
                 high_res_masks,
                 _,
                 object_score_logits,
+                cls_preds,
             ) = sam_outputs
             all_pred_masks.append(low_res_masks)
             all_pred_high_res_masks.append(high_res_masks)
@@ -525,6 +533,7 @@ class SAM2Train(SAM2Base):
             all_pred_ious.append(ious)
             all_point_inputs.append(point_inputs)
             all_object_score_logits.append(object_score_logits)
+            all_cls_preds.append(cls_preds)
 
         # Concatenate the masks along channel (to compute losses on all of them,
         # using `MultiStepIteractiveMasks`)
