@@ -280,7 +280,7 @@ class MultiStepMultiMasksAndIous(nn.Module):
 
         # Classification loss (new)
         if pred_classes is not None and target_classes is not None:
-            loss_cls = self.cls_criterion(pred_classes, target_classes)
+            loss_cls = self.cls_criterion(pred_classes, target_classes) / num_objects
         else:
             loss_cls = torch.tensor(0.0, device=loss_multimask.device)
 
