@@ -3,14 +3,14 @@
 launcher:
   num_nodes: 1
   gpus_per_node: 8
-  experiment_log_dir: /ssd/ml/sam2_geojson_dataset_cls_classification_base_lr_3e-4_vision_lr_6e-5_max_objects_32_frame_1/ # Path to log directory, defaults to ./sam2_logs/${config_name}
+  experiment_log_dir: /home/jovyan/ml-data-ptr/sam2_exps/sam2_geojson_dataset_classification_n_31_class_mapping_v2_base_lr_3e-4_vision_lr_6e-5_max_objects_32_frame_1/ # Path to log directory, defaults to ./sam2_logs/${config_name}
 
 scratch:
   resolution: 1024
   train_batch_size: 1
   num_train_workers: 4
   num_frames: 1
-  max_num_objects: 32
+  max_num_objects: 48
   base_lr: 3.0e-04
   vision_lr: 6.0e-05
   phases_per_epoch: 1
@@ -18,10 +18,10 @@ scratch:
 
 dataset:
   # PATHS to Dataset
-  img_folder: /ssd/datasets/sam2_unit_geojson_dataset_jan3/images
-  gt_folder: /ssd/datasets/sam2_unit_geojson_dataset_jan3/geojsons
+  img_folder: /home/jovyan/ml-data-ptr/sam2_unit_geojson_dataset_jan3/images
+  gt_folder: /home/jovyan/ml-data-ptr/sam2_unit_geojson_dataset_jan3/geojsons
   file_list_txt: training/assets/MAPSCALE_train_list.txt # Optional PATH to filelist containing a subset of videos to be used for training
-  multiplier: 2
+  multiplier: 1
 
 # Video transforms
 vos:
@@ -315,7 +315,7 @@ trainer:
       ignore_missing_keys: ["sam_mask_decoder.cls_head.*"]
       state_dict:
         _target_: training.utils.checkpoint_utils.load_checkpoint_and_apply_kernels
-        checkpoint_path: /ssd/ml/sam2_geojson_dataset_azure_training/checkpoint.pt # PATH to SAM 2.1 checkpoint
+        checkpoint_path: /home/jovyan/ml-data-ptr/sam2_exps/sam2_geojson_dataset_base_lr_3e-4_vision_lr_6e-5_max_objects_32_frame_1/checkpoints/checkpoint.pt # PATH to SAM 2.1 checkpoint]
         ckpt_state_dict_keys: ['model']
 
 # SLURM args if running on a cluster

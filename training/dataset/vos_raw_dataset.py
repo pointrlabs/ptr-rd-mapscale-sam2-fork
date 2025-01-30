@@ -389,38 +389,38 @@ class GeoJSONDataset(VOSRawDataset):
         image_path = os.path.join(self.img_folder, f"{video_name}.png")
         video_geojson_root = os.path.join(self.gt_folder, video_name)
 
-        image = Image.open(image_path).convert("RGB") 
-        segment_loader = GeoJSONSegmentLoader(video_geojson_root)
-
-        # Generate all crops first
-        all_crops = []
-        for level in range(self.crop_levels):
-            crops = self._generate_crops(image, level)
-            all_crops.extend(crops)
-
-        # Set crop information in the segment loader
-        segment_loader.set_crop_info(all_crops, image.size)
-
-        # Create a list of indices and shuffle them
-        crop_indices = list(range(len(all_crops)))
-        random.shuffle(crop_indices)
-
-        # Create frames with shuffled order
-        frames = []
-        for frame_idx, crop_idx in enumerate(crop_indices):
-            crop_box = all_crops[crop_idx]
-            crop = image.crop(crop_box)
-            # Convert to tensor
-            crop_tensor = torch.from_numpy(np.array(crop) / 255.0).permute(2, 0, 1)
-
-            frame = VOSFrame(
-                frame_idx=crop_idx,  # Keep original crop_idx for segment_loader
-                image_path=image_path,
-                data=crop_tensor,
-                is_conditioning_only=False
-            )
-            frames.append(frame)
-
+        with Image.open(image_path).convert("RGB") as image:
+            segment_loader = GeoJSONSegmentLoader(video_geojson_root)
+    
+            # Generate all crops first
+            all_crops = []
+            for level in range(self.crop_levels):
+                crops = self._generate_crops(image, level)
+                all_crops.extend(crops)
+    
+            # Set crop information in the segment loader
+            segment_loader.set_crop_info(all_crops, image.size)
+    
+            # Create a list of indices and shuffle them
+            crop_indices = list(range(len(all_crops)))
+            random.shuffle(crop_indices)
+    
+            # Create frames with shuffled order
+            frames = []
+            for frame_idx, crop_idx in enumerate(crop_indices):
+                crop_box = all_crops[crop_idx]
+                crop = image.crop(crop_box)
+                # Convert to tensor
+                crop_tensor = torch.from_numpy(np.array(crop) / 255.0).permute(2, 0, 1)
+    
+                frame = VOSFrame(
+                    frame_idx=crop_idx,  # Keep original crop_idx for segment_loader
+                    image_path=image_path,
+                    data=crop_tensor,
+                    is_conditioning_only=False
+                )
+                frames.append(frame)
+                
         video = VOSVideo(video_name, idx, frames)
         return video, segment_loader
 

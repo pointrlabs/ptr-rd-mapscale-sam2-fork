@@ -96,10 +96,11 @@ class MaskDecoder(nn.Module):
             iou_head_depth,
             sigmoid_output=iou_prediction_use_sigmoid,
         )
+        self.num_classes = 31
         self.cls_head = MLP(
             transformer_dim,
             iou_head_hidden_dim,
-            27,
+            self.num_classes + 1,
             iou_head_depth,
             sigmoid_output=False,
         )

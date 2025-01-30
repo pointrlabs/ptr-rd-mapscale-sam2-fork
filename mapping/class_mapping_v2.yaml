@@ -1,0 +1,178 @@
+class_mapping:
+  # Furniture & Fixtures (visually distinct patterns)
+  workstation-chair: 0
+  meeting-room-chair: 0
+  pouchair: 0
+  chair: 0
+  workstation-desk: 1
+  meeting-room-desk: 1
+  desk: 1
+  break-area-desk: 1
+  storage-cabinet: 2
+  storage: 2
+  rack: 2
+  couch: 3
+  bench: 3
+  break-area-couch: 3
+  waiting-seats: 3
+  seating: 3
+  tiered-seating: 3
+  game-table: 3
+
+  # Structural Elements
+  opening: 4
+  unit-separator: 5
+
+  # Circulation Elements (distinct patterns)
+  stairs: 6
+  lift: 7
+  service-lift: 7
+  escalator: 8
+  ramp: 9
+  entrance: 10
+  entrance-exit: 10
+  exit: 10
+  building-entrance-exit: 10
+  vestibule: 10
+
+  # Workstation (small, individual desk unit)
+  workstation: 11
+
+  # Work Space (larger office space)
+  work-space: 12
+  office: 12
+
+  # Meeting Spaces (large table with chairs around)
+  meeting-space: 13
+  team-space: 13
+  conference-hall: 13
+
+  # Laboratories (specialized furniture/equipment layout)
+  laboratory: 14
+  workshop: 14
+  development-lab: 14
+  testing-space: 14
+
+  # Theater-style Rooms (tiered seating)
+  auditorium: 15
+  theatre: 15
+  lecture-hall: 15
+
+  # Reception/Waiting (open space with scattered seating)
+  lobby: 16
+  reception: 16
+  waiting-area: 16
+  help-desk: 16
+  foyer: 16
+  atrium: 16
+
+  # Break Areas (mixed furniture arrangement)
+  breakroom: 17
+  lounge: 17
+  cafes-coffee-tea-houses: 17
+
+  # Utility Rooms (small, minimal furniture)
+  utility-room: 18
+  storage-room: 18
+  print-copy: 18
+  support-space: 18
+  office-equipment-accessories: 18
+
+  # Medical Rooms (examination bed + equipment layout)
+  examination-room: 19
+  treatment-room: 19
+  operating-room: 19
+  emergency-room: 19
+  dental-office: 19
+  consultation-room: 19
+
+  # Patient Rooms (bed + bathroom layout)
+  patient-room: 20
+  observation-room: 20
+  medical-surgical-unit: 20
+
+  # Medical Support (specialized equipment/storage)
+  pharmacy: 21
+  nurse-station: 21
+  imaging-unit: 21
+  preparation-room: 21
+  therapy-rehabilitation-room: 21
+
+  # Restrooms (distinctive fixtures)
+  toilets: 22
+  mens-restroom: 22
+  womens-restroom: 22
+  shower: 22
+  mothers-room: 22
+
+  # Sports/Recreation (large marked spaces)
+  gymnasium: 23
+  sports-recreation: 23
+  basketball-court: 23
+  tennis-court: 23
+  swimming-pool: 23
+  football-field: 23
+
+  # Outdoor Spaces (distinctive patterns)
+  terrace: 24
+  garden: 24
+  gardens: 24
+  park-garden: 24
+
+  # Parking (regular patterns)
+  parking-spot: 25
+  parking-row: 25
+  parking-service: 25
+
+  # Security (specific checkpoint layout)
+  security-safety: 26
+  security-check: 26
+
+  # Void (distinct shaft-like appearance)
+  void: 27
+
+  # Kitchen (distinct counter/appliance layout)
+  kitchen: 28
+  kitchenette: 28
+
+  # Learning Spaces (distinct furniture arrangement)
+  classroom: 29
+  library: 29
+  child-care: 29
+
+  # Undefined (catch-all)
+  unspecified: 30
+  undefined: 30
+
+class_names:
+  0: chair
+  1: desk
+  2: storage-furniture
+  3: seating
+  4: opening
+  5: unit-separator
+  6: stairs
+  7: lift
+  8: escalator
+  9: ramp
+  10: entrance
+  11: workstation
+  12: work-space
+  13: meeting-room
+  14: laboratory
+  15: theater-room
+  16: reception-area
+  17: break-area
+  18: utility-room
+  19: medical-room
+  20: patient-room
+  21: medical-support
+  22: restroom
+  23: sports-area
+  24: outdoor-space
+  25: parking
+  26: security
+  27: void
+  28: kitchen
+  29: learning-space
+  30: undefined

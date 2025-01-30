@@ -216,6 +216,8 @@ class SAM2AutomaticMaskGenerator:
                 "point_coords": [mask_data["points"][idx].tolist()],
                 "stability_score": mask_data["stability_score"][idx].item(),
                 "crop_box": box_xyxy_to_xywh(mask_data["crop_boxes"][idx]).tolist(),
+                "predicted_class": mask_data["predicted_classes"][idx].item(),  # Add class prediction
+
             }
             curr_anns.append(ann)
 
@@ -311,7 +313,7 @@ class SAM2AutomaticMaskGenerator:
         in_labels = torch.ones(
             in_points.shape[0], dtype=torch.int, device=in_points.device
         )
-        masks, iou_preds, low_res_masks = self.predictor._predict(
+        masks, iou_preds, low_res_masks, predicted_classes = self.predictor._predict(
             in_points[:, None, :],
             in_labels[:, None],
             multimask_output=self.multimask_output,
@@ -324,6 +326,8 @@ class SAM2AutomaticMaskGenerator:
             iou_preds=iou_preds.flatten(0, 1),
             points=points.repeat_interleave(masks.shape[1], dim=0),
             low_res_masks=low_res_masks.flatten(0, 1),
+            predicted_classes=predicted_classes.repeat_interleave(masks.shape[1], dim=0),  # Changed this line
+
         )
         del masks
 
@@ -437,11 +441,12 @@ class SAM2AutomaticMaskGenerator:
     def refine_with_m2m(self, points, point_labels, low_res_masks, points_per_batch):
         new_masks = []
         new_iou_preds = []
-
+        new_classes = []
+    
         for cur_points, cur_point_labels, low_res_mask in batch_iterator(
             points_per_batch, points, point_labels, low_res_masks
         ):
-            best_masks, best_iou_preds, _ = self.predictor._predict(
+            best_masks, best_iou_preds, _, predicted_classes = self.predictor._predict(
                 cur_points[:, None, :],
                 cur_point_labels[:, None],
                 mask_input=low_res_mask[:, None, :],
@@ -450,5 +455,8 @@ class SAM2AutomaticMaskGenerator:
             )
             new_masks.append(best_masks)
             new_iou_preds.append(best_iou_preds)
+            new_classes.append(predicted_classes)
         masks = torch.cat(new_masks, dim=0)
-        return masks, torch.cat(new_iou_preds, dim=0)
+        iou_preds = torch.cat(new_iou_preds, dim=0)
+        predicted_classes = torch.cat(new_classes, dim=0)
+        return masks, iou_preds  # Remove predicted_classes from return value for now

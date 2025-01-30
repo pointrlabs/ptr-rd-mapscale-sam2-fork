@@ -355,10 +355,11 @@ class GeoJSONSegmentLoader:
         self._cache = {}
         self._cache_size = 100
 
+        self.executor = ThreadPoolExecutor(max_workers=4)
 
         # Load class mappings
         import yaml
-        with open(os.path.join('mapping/class_mapping.yaml'), 'r') as f:
+        with open(os.path.join('mapping/class_mapping_v2.yaml'), 'r') as f:
             mapping_data = yaml.safe_load(f)
             self.class_mapping = mapping_data['class_mapping']
             self.class_names = mapping_data['class_names']
@@ -366,11 +367,13 @@ class GeoJSONSegmentLoader:
     def _precompute_geometries(self, crop_geometry):
         """Pre-compute and cache all transformed geometries that intersect with the crop box"""
                 
-        excluded_type_codes = ['wall', 'external-wall', 'glass-wall', 'circulation', 'desk', "workstation-desk", 
-                            "break-area-desk", "game-table", "workstation-chair", "meeting-room-chair", "office-equipment-accessories",
-                            "couch", "pouchair", "break-area-couch", "waiting-seats", "meeting-table", "meeting-desk", "meeting-room-desk",
-                            "floor-outline", "building-outline", "hallway", "vestibule"]
+        # excluded_type_codes = ['wall', 'external-wall', 'glass-wall', 'circulation', 'desk', "workstation-desk", 
+        #                     "break-area-desk", "game-table", "workstation-chair", "meeting-room-chair", "office-equipment-accessories",
+        #                     "couch", "pouchair", "break-area-couch", "waiting-seats", "meeting-table", "meeting-desk", "meeting-room-desk",
+        #                     "floor-outline", "building-outline", "hallway", "vestibule"]
 
+        excluded_type_codes = ['wall', 'external-wall', 'glass-wall', 'circulation', 
+                                "floor-outline", "building-outline"]
         # First transform features and filter by type_codes and crop_box intersection
         filtered_features = []
         for feature in self.geojson_data['features']:
@@ -525,10 +528,13 @@ class GeoJSONSegmentLoader:
                 
             return None
 
-        # Process objects in parallel
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            results = executor.map(process_object, self._transformed_geometries.keys())
-            
+        # # Process objects in parallel
+        # with ThreadPoolExecutor(max_workers=4) as executor:
+        #     results = executor.map(process_object, self._transformed_geometries.keys())
+
+        # Use the persistent executor
+        results = self.executor.map(process_object, self._transformed_geometries.keys())
+
         # Collect results
         for result in results:
             if result is not None:
@@ -550,7 +556,11 @@ class GeoJSONSegmentLoader:
     
     def __len__(self):
         return len(self.crops) if self.crops is not None else 0
-    
+
+    def __del__(self):
+        """Ensure the executor is properly shut down"""
+        self.executor.shutdown(wait=True)
+        
     # def visualize_transformed_geometries(self, crop_geometry):
     # """
     # Visualize all transformed geometries and crop box for debugging.
